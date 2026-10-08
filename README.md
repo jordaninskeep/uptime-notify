@@ -172,3 +172,7 @@ the account keys, and losing it means registering the number again.
   `.env`, for example `/run/user/1000/docker.sock` for rootless Docker.
 - **Pin the build.** Set `CADDY_TAILSCALE_REF` to a commit SHA of
   `tailscale/caddy-tailscale`.
+
+## License
+
+[MIT](LICENSE)
