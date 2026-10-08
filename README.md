@@ -119,7 +119,32 @@ Settings → Docker Hosts → add a host:
 - Connection type: **TCP / HTTP**
 - Docker Daemon: `http://socket-proxy:2375`
 
-Then create monitors of type "Docker Container".
+Then create monitors of type "Docker Container", or let the script below
+create them all.
+
+#### Add every running container automatically
+
+`scripts/add_container_monitors.py` reads `docker ps` on the host and creates a
+group per Compose project ("Containers: &lt;project&gt;") with a Docker Container
+monitor for each running container. It also adds the Docker host above if it's
+missing. It never edits or deletes existing monitors, so re-run it whenever you
+add containers. Kuma's own container is skipped.
+
+It needs [uv](https://docs.astral.sh/uv/), which installs the
+`uptime-kuma-api` dependency on the fly. Run it on the Docker host:
+
+```sh
+export KUMA_URL=https://uptime.tail1234.ts.net   # KUMA_USER defaults to admin
+uv run scripts/add_container_monitors.py --dry-run
+uv run scripts/add_container_monitors.py         # prompts for the password
+```
+
+Options: `--interval 60` sets the check interval, and `--skip NAME`
+(repeatable) leaves out a container.
+
+Set up the Signal notification first and tick **Default enabled**. Monitors
+created through the API only get default notifications if the script attaches
+them, and it attaches whichever notifications are marked default when it runs.
 
 ## Operations
 
