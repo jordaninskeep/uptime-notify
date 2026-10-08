@@ -1,0 +1,97 @@
+# compose.yaml -- Uptime Kuma + Signal alerts, served privately on a Tailscale tailnet.
+#
+#   uptime-kuma   monitoring UI + checks
+#   signal-api    signal-cli-rest-api; Kuma sends alerts through it
+#   socket-proxy  read-only Docker API for Kuma's "Docker Container" monitors
+#   caddy         joins your tailnet as its own node and serves Kuma over HTTPS
+#
+# No host ports are published. The only way in is https://<TS_HOSTNAME>.<TS_TAILNET>.
+# Configure via .env (copy .env.example). See README.md for first-run steps.
+name: ${COMPOSE_PROJECT_NAME:-uptime-notify}
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    restart: unless-stopped
+    volumes:
+      - ./data/kuma:/app/data
+    networks:
+      # default: egress for HTTP/DNS/ping monitors, and the Caddy upstream.
+      - default
+      - docker-api
+      # Alert delivery: Signal notification -> http://signal-api:8080/v2/send
+      - signal
+
+  # The REST API has NO authentication: anything that can reach it can send
+  # messages as your Signal number. So it gets no published port, and the only
+  # network it shares with anything is the internal `signal` one, which only
+  # Kuma joins. Admin calls (register/verify) go through `docker compose exec`.
+  signal-api:
+    image: bbernhard/signal-cli-rest-api:0.101
+    restart: unless-stopped
+    environment:
+      # signal-cli as a native daemon: fast sends, modest memory, and it
+      # receives continuously so no AUTO_RECEIVE_SCHEDULE is needed.
+      MODE: json-rpc-native
+    volumes:
+      # Account keys + registration. Losing this means re-registering the
+      # number -- back it up. The container runs as uid 1000, which must be
+      # able to write here.
+      - ./data/signal:/home/.local/share/signal-cli
+    networks:
+      # default: egress to Signal's servers.
+      - default
+      - signal
+
+  # The raw Docker socket is root-equivalent, so Kuma never sees it. This proxy
+  # allows GET on /containers (+ /_ping, /version) and rejects every write.
+  # In Kuma: Settings -> Docker Hosts -> TCP / HTTP, http://socket-proxy:2375
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      # Explicit even though it's the default: no writes of any kind.
+      POST: 0
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+
+  # Reverse proxy that joins the tailnet as its own node (userspace tsnet: no
+  # /dev/net/tun, no NET_ADMIN) and gets an automatic HTTPS cert for its
+  # MagicDNS name.
+  caddy:
+    build:
+      context: ./caddy
+      args:
+        CADDY_TAILSCALE_REF: ${CADDY_TAILSCALE_REF:-main}
+    restart: unless-stopped
+    environment:
+      # `:?` so a missing value fails loudly instead of starting half-configured.
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env}
+      TS_TAILNET: ${TS_TAILNET:?set TS_TAILNET in .env}
+      TS_HOSTNAME: ${TS_HOSTNAME:-uptime}
+      TS_TAGS: ${TS_TAGS:-tag:container}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      # Node identity. Without this the node re-registers on every recreate,
+      # leaving stale machines (uptime-1, uptime-2, ...) in the admin console.
+      - caddy_tailscale:/var/lib/tailscale
+    depends_on:
+      uptime-kuma:
+        # The uptime-kuma image ships its own HEALTHCHECK.
+        condition: service_healthy
+
+networks:
+  # No external route on either: they only connect containers in this stack.
+  docker-api:
+    internal: true
+  signal:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_tailscale:

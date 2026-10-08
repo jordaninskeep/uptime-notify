@@ -1,0 +1,25 @@
+{
+	tailscale {
+		# Named tailnet node, referenced by `bind` below. Hostname and tags are
+		# substituted at adapt time ({$...}); the auth key stays a runtime
+		# placeholder so the secret isn't baked into Caddy's autosaved config.
+		# `tags` is required when TS_AUTHKEY is an OAuth client secret.
+		{$TS_HOSTNAME} {
+			auth_key {env.TS_AUTHKEY}
+			hostname {$TS_HOSTNAME}
+			ephemeral false
+			tags {$TS_TAGS}
+			state_dir /var/lib/tailscale
+		}
+	}
+}
+
+# Serve on the node's MagicDNS name; Caddy gets the HTTPS cert from Tailscale.
+https://{$TS_HOSTNAME}.{$TS_TAILNET} {
+	bind tailscale/{$TS_HOSTNAME}
+
+	encode zstd gzip
+
+	# Kuma's UI is socket.io; Caddy proxies the websocket upgrade as-is.
+	reverse_proxy uptime-kuma:3001
+}
